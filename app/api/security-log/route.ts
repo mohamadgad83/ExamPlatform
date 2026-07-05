@@ -23,6 +23,12 @@ const securityLogSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
     const parsed = securityLogSchema.safeParse(body);
 
@@ -34,6 +40,26 @@ export async function POST(request: NextRequest) {
     }
 
     const { attemptId, studentId, examId, violationType, details, severity } = parsed.data;
+
+    const { data: attemptData } = await supabase
+      .from("exam_attempts")
+      .select("student_id")
+      .eq("id", attemptId)
+      .single();
+
+    if (!attemptData || attemptData.student_id !== user.id) {
+      return NextResponse.json(
+        { error: "لا يمكنك الإبلاغ عن انتهاكات لاختبار لا تملكه" },
+        { status: 403 }
+      );
+    }
+
+    if (studentId !== user.id) {
+      return NextResponse.json(
+        { error: "معرف الطالب غير متطابق" },
+        { status: 403 }
+      );
+    }
 
     const { error: notifError } = await supabase.from("exam_notifications").insert({
       user_id: studentId,

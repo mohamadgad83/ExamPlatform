@@ -12,6 +12,12 @@ const calculateScoreSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
     const parsed = calculateScoreSchema.safeParse(body);
 
@@ -23,6 +29,61 @@ export async function POST(request: NextRequest) {
     }
 
     const { examId, studentId, answers, timeSpentSeconds } = parsed.data;
+
+    if (user.id !== studentId) {
+      return NextResponse.json(
+        { error: "لا يمكنك تقديم الاختبار نيابة عن طالب آخر" },
+        { status: 403 }
+      );
+    }
+
+    const { data: enrollment } = await supabase
+      .from("exam_enrollments")
+      .select("id")
+      .eq("student_id", studentId)
+      .eq("exam_id", examId)
+      .single();
+
+    if (!enrollment) {
+      return NextResponse.json(
+        { error: "أنت غير مسجل في هذا الاختبار" },
+        { status: 403 }
+      );
+    }
+
+    const { data: examData } = await supabase
+      .from("exam_exams")
+      .select("end_time, is_published")
+      .eq("id", examId)
+      .single();
+
+    if (!examData?.is_published) {
+      return NextResponse.json(
+        { error: "الاختبار غير متاح" },
+        { status: 403 }
+      );
+    }
+
+    if (examData.end_time && new Date(examData.end_time) < new Date()) {
+      return NextResponse.json(
+        { error: "انتهى وقت الاختبار" },
+        { status: 403 }
+      );
+    }
+
+    const { data: existingAttempt } = await supabase
+      .from("exam_attempts")
+      .select("id")
+      .eq("student_id", studentId)
+      .eq("exam_id", examId)
+      .single();
+
+    if (existingAttempt) {
+      return NextResponse.json(
+        { error: "لقد قدمت هذا الاختبار مسبقاً" },
+        { status: 409 }
+      );
+    }
 
     const { data: examQuestions, error: eqError } = await supabase
       .from("exam_exam_questions")
@@ -90,13 +151,13 @@ export async function POST(request: NextRequest) {
 
     const percentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
 
-    const { data: examData } = await supabase
+    const { data: examPassData } = await supabase
       .from("exam_exams")
       .select("passing_score")
       .eq("id", examId)
       .single();
 
-    const passingScore = examData?.passing_score || 50;
+    const passingScore = examPassData?.passing_score || 50;
     const status = percentage >= passingScore ? "passed" : "failed";
 
     const { data: attempt, error: attemptError } = await supabase
