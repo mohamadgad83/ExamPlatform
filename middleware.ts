@@ -1,82 +1,66 @@
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request: { headers: request.headers } });
+// Simple rate limiting using in-memory store (use Redis in production)
+const rateLimitStore = new Map<string, { count: number; resetTime: number }>()
+const RATE_LIMIT_WINDOW = 60 * 1000 // 1 minute
+const RATE_LIMIT_MAX = 30 // 30 requests per minute for API
+const AUTH_RATE_LIMIT_MAX = 5 // 5 login/register attempts per minute
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) { return request.cookies.get(name)?.value; },
-        set(name: string, value: string, options: CookieOptions) {
-          request.cookies.set({ name, value, ...options });
-          response = NextResponse.next({ request: { headers: request.headers } });
-          response.cookies.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          request.cookies.set({ name, value: "", ...options });
-          response = NextResponse.next({ request: { headers: request.headers } });
-          response.cookies.set({ name, value: "", ...options });
-        },
-      },
+function getRateLimitKey(request: NextRequest): string {
+  const forwarded = request.headers.get('x-forwarded-for')
+  const ip = forwarded?.split(',')[0]?.trim() || 'unknown'
+  return ip
+}
+
+function checkRateLimit(key: string, maxRequests: number): boolean {
+  const now = Date.now()
+  const entry = rateLimitStore.get(key)
+
+  if (!entry || now > entry.resetTime) {
+    rateLimitStore.set(key, { count: 1, resetTime: now + RATE_LIMIT_WINDOW })
+    return true
+  }
+
+  if (entry.count >= maxRequests) {
+    return false
+  }
+
+  entry.count++
+  return true
+}
+
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // CORS headers for API routes
+  if (pathname.startsWith('/api/')) {
+    const response = NextResponse.next()
+
+    // Security headers
+    response.headers.set('X-Content-Type-Options', 'nosniff')
+    response.headers.set('X-Frame-Options', 'DENY')
+    response.headers.set('X-XSS-Protection', '1; mode=block')
+    response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+
+    // Rate limiting
+    const rateLimitKey = getRateLimitKey(request)
+    const isAuthRoute = pathname.startsWith('/api/auth/')
+    const maxRequests = isAuthRoute ? AUTH_RATE_LIMIT_MAX : RATE_LIMIT_MAX
+
+    if (!checkRateLimit(`${rateLimitKey}:${isAuthRoute ? 'auth' : 'api'}`, maxRequests)) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      )
     }
-  );
 
-  // Check custom auth token (exam_auth)
-  const authCookie = request.cookies.get("exam_auth")?.value;
-  let userRole: string | null = null;
-  let isAuthenticated = false;
-
-  if (authCookie) {
-    try {
-      const parsed = JSON.parse(authCookie);
-      if (parsed.expiresAt && parsed.expiresAt > Date.now()) {
-        isAuthenticated = true;
-        userRole = parsed.user?.role || null;
-      }
-    } catch { /* invalid cookie */ }
+    return response
   }
 
-  // Fallback to Supabase Auth
-  if (!isAuthenticated) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: userData } = await supabase.from("exam_users").select("role").eq("id", user.id).single();
-      if (userData) { isAuthenticated = true; userRole = userData.role; }
-    }
-  }
-
-  const pathname = request.nextUrl.pathname;
-
-  // Public routes
-  if (pathname === "/" || pathname.startsWith("/login") || pathname.startsWith("/register") || pathname.startsWith("/forgot-password")) {
-    return response;
-  }
-
-  // Protected routes
-  if (!isAuthenticated) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  // Role-based access
-  const roleRoutes: Record<string, string[]> = {
-    student: ["/student", "/dashboard"],
-    teacher: ["/teacher", "/dashboard"],
-    admin: ["/admin", "/teacher", "/student", "/dashboard"],
-  };
-
-  const allowedRoutes = userRole ? roleRoutes[userRole] || [] : [];
-  const hasAccess = allowedRoutes.some((route) => pathname.startsWith(route));
-
-  if (!hasAccess) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  return response;
+  return NextResponse.next()
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
-};
+  matcher: ['/api/:path*'],
+}
