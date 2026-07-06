@@ -1,10 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    appDir: true,
-  },
+  // تم إزالة experimental.appDir لأنه لم يعد مطلوباً في Next.js 14+
   images: {
     domains: ["localhost"],
+    // للإصدارات الأحدث يمكنك استخدام remotePatterns بدلاً من domains
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "localhost",
+      },
+    ],
   },
   async headers() {
     return [
