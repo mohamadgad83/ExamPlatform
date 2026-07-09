@@ -8,6 +8,9 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "منصة الاختبارات - نظام إدارة الاختبارات الإلكترونية",
   description: "منصة متكاملة لإنشاء وإدارة الاختبارات الإلكترونية",
+  icons: {
+    icon: "/favicon.ico", // أو استخدم emoji/icon من lucide
+  },
 };
 
 export default function RootLayout({
