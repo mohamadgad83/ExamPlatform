@@ -49,7 +49,9 @@ export default function RegisterPage() {
       password: values.password, grade_id: values.grade_id || null, status: "active",
     });
     if (studentError) { setError(studentError.message); return; }
-    await supabase.from("exam_users").insert({ name: values.name, phone: values.phone, role: "student", password_hash: values.password, status: "active" }).catch(() => {});
+    try {
+      await supabase.from("exam_users").insert({ name: values.name, phone: values.phone, role: "student", password_hash: values.password, status: "active" });
+    } catch {}
     setSuccess("تم إنشاء الحساب بنجاح! جاري التحويل...");
     setTimeout(() => router.push("/login"), 1500);
   };
@@ -60,7 +62,9 @@ export default function RegisterPage() {
       username: values.username, password: values.password, specialization: values.specialization || "",
     });
     if (teacherError) { setError(teacherError.message); return; }
-    await supabase.from("exam_users").insert({ name: values.name, email: values.email, role: "teacher", password_hash: values.password, status: "active" }).catch(() => {});
+    try {
+      await supabase.from("exam_users").insert({ name: values.name, email: values.email, role: "teacher", password_hash: values.password, status: "active" });
+    } catch {}
     setSuccess("تم إنشاء الحساب بنجاح! جاري التحويل...");
     setTimeout(() => router.push("/login"), 1500);
   };
