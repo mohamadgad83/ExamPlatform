@@ -16,6 +16,7 @@ import { z } from "zod";
 const userSchema = z.object({
   name: z.string().min(2, "الاسم مطلوب"),
   username: z.string().min(3, "اسم المستخدم 3 أحرف على الأقل").regex(/^[a-zA-Z0-9_]+$/, "حروف/أرقام/underscore بس"),
+  phone: z.string().optional(),
   role: z.enum(["admin", "teacher", "student"]),
   password: z.string().min(6, "كلمة المرور قصيرة"),
   status: z.enum(["active", "suspended", "pending"]).default("active"),
@@ -69,6 +70,7 @@ export default function AdminUsersPage() {
           username: values.username,
           password: values.password,
           role: values.role,
+          phone: values.phone,
         }),
       });
       const data = await res.json();
