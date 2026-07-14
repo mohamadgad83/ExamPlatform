@@ -7,7 +7,7 @@ export function createClient() {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    throw new Error("Missing Supabase environment variables. Check .env.local");
+    throw new Error("⚠️ Missing Supabase environment variables. Check .env.local");
   }
 
   return createServerClient(supabaseUrl, supabaseKey, {
@@ -31,4 +31,22 @@ export function createClient() {
       },
     },
   });
+}
+
+// دالة مساعدة لجلب المستخدم الحالي
+export async function getCurrentUser() {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+// دالة مساعدة لجلب دور المستخدم
+export async function getUserRole(userId: string) {
+  const supabase = createClient();
+  const { data } = await supabase
+    .from("exam_users")
+    .select("role")
+    .eq("id", userId)
+    .single();
+  return data?.role;
 }
