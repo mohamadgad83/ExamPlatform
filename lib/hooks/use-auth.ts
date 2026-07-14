@@ -27,7 +27,6 @@ export function useAuth() {
     isAuthenticated: false,
   });
 
-  // جلب المستخدم من الجلسة
   const loadProfile = useCallback(async (): Promise<User | null> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
@@ -41,7 +40,6 @@ export function useAuth() {
     return data as User | null;
   }, [supabase]);
 
-  // التحقق من الجلسة
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -65,7 +63,7 @@ export function useAuth() {
     checkAuth();
   }, [supabase, loadProfile]);
 
-  // ✅ تسجيل الدخول من جدول exam_users مباشرة
+  // ✅ تسجيل الدخول من جدول exam_users
   const login = useCallback(
     async (username: string, password: string, adminPortal: boolean): Promise<LoginResult> => {
       setState((prev) => ({ ...prev, isLoading: true }));
@@ -73,10 +71,10 @@ export function useAuth() {
       try {
         console.log("🔍 البحث عن المستخدم:", username);
 
-        // 1. البحث في جدول exam_users
+        // 1. جلب المستخدم من exam_users (من غير password)
         const { data: user, error } = await supabase
           .from("exam_users")
-          .select("id, username, name, role, status, password")
+          .select("id, username, name, role, status")
           .eq("username", username)
           .single();
 
@@ -86,36 +84,43 @@ export function useAuth() {
           return { success: false, error: "اسم المستخدم أو كلمة المرور غير صحيحة" };
         }
 
-        // 2. التحقق من كلمة المرور
-        if (user.password !== password) {
-          console.error("❌ كلمة المرور غلط");
-          setState({ user: null, isLoading: false, isAuthenticated: false });
-          return { success: false, error: "اسم المستخدم أو كلمة المرور غير صحيحة" };
-        }
-
-        // 3. التحقق من الحالة
+        // 2. التحقق من الحالة
         if (user.status === "suspended") {
           setState({ user: null, isLoading: false, isAuthenticated: false });
           return { success: false, error: "الحساب موقوف" };
         }
 
-        // 4. التحقق من الصلاحية للأدمن
+        // 3. التحقق من الصلاحية للأدمن
         const isAdmin = user.role === "admin";
         if (isAdmin !== adminPortal) {
           setState({ user: null, isLoading: false, isAuthenticated: false });
           return { success: false, error: "اسم المستخدم أو كلمة المرور غير صحيحة" };
         }
 
-        // 5. حفظ المستخدم في الحالة (نحذف الباسورد)
-        const { password: _, ...userWithoutPassword } = user;
+        // 4. ✅ التحقق من كلمة المرور عن طريق API (آمن)
+        const response = await fetch("/api/auth/verify-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+
+        const verifyResult = await response.json();
+
+        if (!response.ok || !verifyResult.success) {
+          console.error("❌ كلمة المرور غير صحيحة");
+          setState({ user: null, isLoading: false, isAuthenticated: false });
+          return { success: false, error: "اسم المستخدم أو كلمة المرور غير صحيحة" };
+        }
+
+        // 5. حفظ المستخدم
         setState({
-          user: userWithoutPassword as User,
+          user: user as User,
           isLoading: false,
           isAuthenticated: true,
         });
 
         console.log("✅ تسجيل الدخول ناجح:", user.username);
-        return { success: true, user: userWithoutPassword as User };
+        return { success: true, user: user as User };
 
       } catch (error) {
         console.error("❌ خطأ:", error);
