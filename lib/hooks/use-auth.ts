@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { usernameToSyntheticEmail } from "@/lib/username";
 
 interface User {
   id: string;
@@ -22,16 +21,27 @@ type LoginResult = { success: true; user: User } | { success: false; error: stri
 
 export function useAuth() {
   const supabase = createClient();
-  const [state, setState] = useState<AuthState>({ user: null, isLoading: true, isAuthenticated: false });
+  const [state, setState] = useState<AuthState>({
+    user: null,
+    isLoading: true,
+    isAuthenticated: false,
+  });
 
+  // جلب المستخدم من الجلسة
   const loadProfile = useCallback(async (): Promise<User | null> => {
-    const { data: userData } = await supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+
+    const { data } = await supabase
       .from("exam_users")
       .select("id, name, username, role, status")
+      .eq("id", user.id)
       .single();
-    return (userData as User) ?? null;
+
+    return data as User | null;
   }, [supabase]);
 
+  // التحقق من الجلسة
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -39,7 +49,11 @@ export function useAuth() {
         if (session?.user) {
           const profile = await loadProfile();
           if (profile) {
-            setState({ user: profile, isLoading: false, isAuthenticated: true });
+            setState({
+              user: profile,
+              isLoading: false,
+              isAuthenticated: true,
+            });
             return;
           }
         }
@@ -51,49 +65,65 @@ export function useAuth() {
     checkAuth();
   }, [supabase, loadProfile]);
 
-  /**
-   * تسجيل دخول موحّد باليوزرنيم. لو adminPortal=false (الصفحة العادية) وكان
-   * حساب المستخدم أدمن، بيترفض برسالة عامة — الأدمن لازم يدخل من البوابة السرية.
-   * ولو adminPortal=true، لازم الحساب يكون أدمن فعلاً وإلا بيترفض برضه.
-   */
+  // ✅ تسجيل الدخول من جدول exam_users مباشرة
   const login = useCallback(
     async (username: string, password: string, adminPortal: boolean): Promise<LoginResult> => {
       setState((prev) => ({ ...prev, isLoading: true }));
-      const genericError = "اسم المستخدم أو كلمة المرور غير صحيحة";
 
       try {
-        const email = usernameToSyntheticEmail(username);
-        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        console.log("🔍 البحث عن المستخدم:", username);
 
-        if (signInError) {
+        // 1. البحث في جدول exam_users
+        const { data: user, error } = await supabase
+          .from("exam_users")
+          .select("id, username, name, role, status, password")
+          .eq("username", username)
+          .single();
+
+        if (error || !user) {
+          console.error("❌ المستخدم غير موجود");
           setState({ user: null, isLoading: false, isAuthenticated: false });
-          return { success: false, error: genericError };
+          return { success: false, error: "اسم المستخدم أو كلمة المرور غير صحيحة" };
         }
 
-        const profile = await loadProfile();
-
-        if (!profile || (profile.status && profile.status === "suspended")) {
-          await supabase.auth.signOut();
+        // 2. التحقق من كلمة المرور
+        if (user.password !== password) {
+          console.error("❌ كلمة المرور غلط");
           setState({ user: null, isLoading: false, isAuthenticated: false });
-          return { success: false, error: profile ? "الحساب موقوف. يرجى التواصل مع الإدارة." : genericError };
+          return { success: false, error: "اسم المستخدم أو كلمة المرور غير صحيحة" };
         }
 
-        const isAdmin = profile.role === "admin";
+        // 3. التحقق من الحالة
+        if (user.status === "suspended") {
+          setState({ user: null, isLoading: false, isAuthenticated: false });
+          return { success: false, error: "الحساب موقوف" };
+        }
+
+        // 4. التحقق من الصلاحية للأدمن
+        const isAdmin = user.role === "admin";
         if (isAdmin !== adminPortal) {
-          // أدمن بيحاول يدخل من الصفحة العادية، أو حساب عادي بيحاول يدخل من بوابة الأدمن
-          await supabase.auth.signOut();
           setState({ user: null, isLoading: false, isAuthenticated: false });
-          return { success: false, error: genericError };
+          return { success: false, error: "اسم المستخدم أو كلمة المرور غير صحيحة" };
         }
 
-        setState({ user: profile, isLoading: false, isAuthenticated: true });
-        return { success: true, user: profile };
-      } catch {
+        // 5. حفظ المستخدم في الحالة (نحذف الباسورد)
+        const { password: _, ...userWithoutPassword } = user;
+        setState({
+          user: userWithoutPassword as User,
+          isLoading: false,
+          isAuthenticated: true,
+        });
+
+        console.log("✅ تسجيل الدخول ناجح:", user.username);
+        return { success: true, user: userWithoutPassword as User };
+
+      } catch (error) {
+        console.error("❌ خطأ:", error);
         setState({ user: null, isLoading: false, isAuthenticated: false });
-        return { success: false, error: genericError };
+        return { success: false, error: "حدث خطأ أثناء تسجيل الدخول" };
       }
     },
-    [supabase, loadProfile]
+    [supabase]
   );
 
   const logout = useCallback(async () => {
